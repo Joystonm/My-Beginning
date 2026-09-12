@@ -1,0 +1,16 @@
+-- Optional: enable anonymous (guest) row creation for universes.
+-- When this app is deployed without Supabase auth, browsers store universes
+-- locally; this file is provided in case a project wants a server-side
+-- guest experience via Supabase Anonymous Sign-ins.
+--
+-- Apply only if you want browser-only guests to persist data server-side.
+
+-- create table if not exists public.guest_universes (
+--   id uuid primary key default gen_random_uuid(),
+--   guest_id text not null,
+--   name text not null,
+--   description text,
+--   color text default 'teal',
+--   created_at timestamptz not null default now()
+-- );
+-- alter table public.guest_universes enable row level security;
