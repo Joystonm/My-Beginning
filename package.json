@@ -11,7 +11,8 @@
     "ancestor:calc": "tsx scripts/calculate-ancestors.ts",
     "test:hierarchy": "tsx scripts/test-hierarchy.ts",
     "test:stories": "tsx --import ./scripts/test-loader.ts scripts/test-story-orchestrator.ts",
-    "test": "npm run test:hierarchy && npm run test:stories"
+    "test:auth": "tsx --import ./scripts/test-loader.ts scripts/test-auth-redirect.ts",
+    "test": "npm run test:hierarchy && npm run test:stories && npm run test:auth"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
@@ -19,7 +20,7 @@
     "@supabase/supabase-js": "^2.45.4",
     "@tavily/core": "^0.7.11",
     "clsx": "^2.1.1",
-    "next": "14.2.15",
+    "next": "^14.2.33",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "recharts": "^2.12.7",

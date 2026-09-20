@@ -16,6 +16,7 @@
  *   GET /v1/cryptocurrency/market-pairs/latest
  *   GET /v1/cryptocurrency/quotes/historical
  *   GET /v1/global-metrics/quotes/latest
+ *   GET /v1/global-metrics/quotes/historical
  *   GET /v1/exchange/listings/latest
  */
 
@@ -566,10 +567,172 @@ export async function getHistoricalQuotes(
   return data;
 }
 
+/**
+ * Batched variant of `getHistoricalQuotes` — fans out across an array of
+ * symbols in parallel, reusing the in-memory cache and retry logic of the
+ * single-symbol client. Returns a map keyed by upper-case symbol.
+ *
+ * Used by the lineage-drift detector, which needs 30+ descendants' price
+ * histories at once. Sequential calls would take ~30 × RTT; parallel
+ * brings it under one second on a healthy connection.
+ *
+ * Failures for individual symbols are caught and surfaced as `null` in
+ * the returned map, so one bad ticker doesn't poison the whole batch.
+ */
+export async function getHistoricalQuotesForSymbols(
+  symbols: readonly string[],
+  opts: Omit<HistoricalParams, "symbol"> = {},
+): Promise<Map<string, CmcHistoricalQuotesResponse>> {
+  const out = new Map<string, CmcHistoricalQuotesResponse>();
+  if (symbols.length === 0) return out;
+  const unique = [...new Set(symbols.map((s) => s.toUpperCase()))];
+  const results = await Promise.all(
+    unique.map(async (sym) => {
+      try {
+        const r = await getHistoricalQuotes({ symbol: sym, ...opts });
+        return [sym, r] as const;
+      } catch {
+        // Per-symbol failure: leave it out of the map.
+        return [sym, null] as const;
+      }
+    }),
+  );
+  for (const [sym, r] of results) {
+    if (r) out.set(sym, r);
+  }
+  return out;
+}
+
 export async function getGlobalMetrics(): Promise<CmcGlobalMetrics> {
-  const data = await request<CmcGlobalMetrics>({
+  // CMC's response has shifted shapes over the years. Older responses
+  // surfaced `total_market_cap` / `total_volume_24h` at the top level
+  // and a `market_cap_percentage` map; the current response nests the
+  // totals under `quote.USD` and exposes `btc_dominance` / `eth_dominance`
+  // flat. We accept either and normalise to the current shape so the
+  // consumer (OverviewTab, drift detector) can rely on a single
+  // contract.
+  const raw = await request<Record<string, unknown>>({
     endpoint: "/v1/global-metrics/quotes/latest",
     params: { convert: "USD" },
+  });
+  return normalizeGlobalMetrics(raw);
+}
+
+function normalizeGlobalMetrics(raw: Record<string, unknown>): CmcGlobalMetrics {
+  const usdNested = raw.quote as
+    | Record<"USD", Record<string, unknown>>
+    | undefined;
+  const usd = usdNested?.USD ?? {};
+  const legacyMcp = raw.market_cap_percentage as Record<string, number> | undefined;
+
+  // Total market cap & 24h volume: prefer the nested USD view, fall back
+  // to top-level legacy fields.
+  const total_market_cap =
+    (usd.total_market_cap as number | undefined) ??
+    (raw.total_market_cap as number | undefined) ??
+    0;
+  const total_volume_24h =
+    (usd.total_volume_24h as number | undefined) ??
+    (raw.total_volume_24h as number | undefined) ??
+    0;
+  const total_volume_24h_reported =
+    (usd.total_volume_24h_reported as number | undefined) ??
+    (raw.total_volume_24h_reported as number | undefined) ??
+    total_volume_24h;
+
+  const change24h =
+    (usd.market_cap_change_percentage_24h_usd as number | undefined) ??
+    (raw.market_cap_change_percentage_24h_usd as number | undefined) ??
+    0;
+
+  // Dominance: prefer flat fields, fall back to the legacy map.
+  const btc_dominance =
+    (raw.btc_dominance as number | undefined) ??
+    (legacyMcp?.btc as number | undefined) ??
+    0;
+  const eth_dominance =
+    (raw.eth_dominance as number | undefined) ??
+    (legacyMcp?.eth as number | undefined) ??
+    0;
+
+  return {
+    active_cryptocurrencies:
+      (raw.active_cryptocurrencies as number | undefined) ?? 0,
+    total_cryptocurrencies: raw.total_cryptocurrencies as number | undefined,
+    active_market_pairs: (raw.active_market_pairs as number | undefined) ?? 0,
+    active_exchanges: (raw.active_exchanges as number | undefined) ?? 0,
+    total_exchanges: raw.total_exchanges as number | undefined,
+    btc_dominance,
+    eth_dominance,
+    last_updated: raw.last_updated as string | undefined,
+    quote: {
+      USD: {
+        total_market_cap,
+        total_volume_24h,
+        total_volume_24h_reported,
+        altcoin_volume_24h: usd.altcoin_volume_24h as number | undefined,
+        altcoin_volume_24h_reported: usd.altcoin_volume_24h_reported as
+          | number
+          | undefined,
+        altcoin_market_cap: usd.altcoin_market_cap as number | undefined,
+        market_cap_change_percentage_24h_usd: change24h,
+        last_updated: usd.last_updated as string | undefined,
+      },
+    },
+  };
+}
+
+export interface HistoricalGlobalParams {
+  /** ISO timestamp or unix seconds. */
+  timeStart?: string;
+  /** ISO timestamp or unix seconds. */
+  timeEnd?: string;
+  interval?: "1h" | "3h" | "6h" | "12h" | "1d" | "2d" | "3d" | "7d";
+  count?: number;
+  convert?: string;
+}
+
+/**
+ * Shape of /v1/global-metrics/quotes/historical — an envelope whose
+ * `data` is the metric name keyed object whose `quotes` are the time
+ * series. We keep the loose typing here because the field set is
+ * tier-gated and the consumer only needs a couple of fields.
+ */
+export interface CmcHistoricalGlobalResponse {
+  quotes: Array<{
+    timestamp: string;
+    quote: Record<
+      "USD",
+      {
+        total_market_cap: number;
+        total_volume_24h: number;
+        total_volume_24h_reported: number;
+        market_cap_change_percentage_24h_usd?: number;
+      }
+    >;
+  }>;
+}
+
+/**
+ * Historical global metrics. Used by the lineage-drift card to compute
+ * "family median return vs total market cap return over the same
+ * window" — the context that makes the family-vs-base headline
+ * meaningful.
+ */
+export async function getHistoricalGlobalMetrics(
+  params: HistoricalGlobalParams = {},
+): Promise<CmcHistoricalGlobalResponse> {
+  const interval = params.interval ?? "1d";
+  const count = params.count ?? 60;
+  const data = await request<CmcHistoricalGlobalResponse>({
+    endpoint: "/v1/global-metrics/quotes/historical",
+    params: {
+      convert: params.convert ?? "USD",
+      interval,
+      count,
+      time_start: params.timeStart,
+      time_end: params.timeEnd,
+    },
   });
   return data;
 }

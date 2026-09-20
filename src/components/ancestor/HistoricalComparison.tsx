@@ -45,8 +45,14 @@ export function HistoricalComparison({
   const { data, symbols } = useMemo(() => {
     // Index each series by timestamp, then merge into rows.
     const byTs = new Map<number, Record<string, number>>();
+    // Dedup symbols defensively — duplicate <Line> children with the
+    // same key produce a React warning, and the underlying data
+    // contract doesn't forbid the API returning the same symbol twice.
+    const seen = new Set<string>();
     const syms: string[] = [];
     series.forEach((s) => {
+      if (seen.has(s.symbol)) return;
+      seen.add(s.symbol);
       syms.push(s.symbol);
       for (const p of s.series) {
         const row = byTs.get(p.t) ?? {};

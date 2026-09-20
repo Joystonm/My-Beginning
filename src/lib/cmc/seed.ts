@@ -194,20 +194,29 @@ export function getSeedGlobalMetrics(): CmcGlobalMetrics {
     (s, c) => s + c.volume24h,
     0,
   );
+  const btc = ALL_SEED.find((s) => s.symbol === "BTC")!.marketCap;
+  const eth = ALL_SEED.find((s) => s.symbol === "ETH")!.marketCap;
+  const now = new Date().toISOString();
   return {
     active_cryptocurrencies: ALL_SEED.length,
+    total_cryptocurrencies: ALL_SEED.length,
     active_exchanges: 220,
     active_market_pairs: ALL_SEED.reduce((s, c) => s + c.numMarketPairs, 0),
-    total_volume_24h,
-    total_volume_24h_reported: total_volume_24h,
-    total_market_cap,
-    market_cap_percentage: {
-      btc: ALL_SEED.find((s) => s.symbol === "BTC")!.marketCap / total_market_cap * 100,
-      eth: ALL_SEED.find((s) => s.symbol === "ETH")!.marketCap / total_market_cap * 100,
+    btc_dominance: (btc / total_market_cap) * 100,
+    eth_dominance: (eth / total_market_cap) * 100,
+    last_updated: now,
+    quote: {
+      USD: {
+        total_market_cap,
+        total_volume_24h,
+        total_volume_24h_reported: total_volume_24h,
+        altcoin_volume_24h: Math.max(0, total_volume_24h - ALL_SEED.find((s) => s.symbol === "USDT")!.volume24h),
+        altcoin_volume_24h_reported: 0,
+        altcoin_market_cap: Math.max(0, total_market_cap - btc - eth),
+        market_cap_change_percentage_24h_usd: 1.42,
+        last_updated: now,
+      },
     },
-    market_cap_change_percentage_24h_usd: 1.42,
-    volume_change_percentage_24h_usd: -0.85,
-    updated_at: new Date().toISOString(),
   };
 }
 

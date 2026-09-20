@@ -8,6 +8,18 @@ interface Props {
   story: CoinStory | null;
   loading: boolean;
   error: string | null;
+  /**
+   * Where the story came from on the last successful fetch. Used to
+   * surface a small "Served from cache" indicator so users understand
+   * why a long-tail coin has a story even with thin research.
+   */
+  source?:
+    | "static"
+    | "story-cache"
+    | "research-cache"
+    | "fresh"
+    | "fallback"
+    | null;
   onRetry?: () => void;
 }
 
@@ -26,12 +38,13 @@ interface Props {
  *     body itself never carries inline citations — that would break the
  *     editorial reading experience.
  */
-export function CoinStory({ story, loading, error, onRetry }: Props) {
+export function CoinStory({ story, loading, error, source, onRetry }: Props) {
   return (
     <section className="border-t border-line-subtle pt-10 mt-10">
       <header className="max-w-3xl mx-auto text-center mb-8">
-        <div className="heading-eyebrow text-ink-tertiary mb-3">
-          The Story
+        <div className="heading-eyebrow text-ink-tertiary mb-3 flex items-center justify-center gap-3">
+          <span>The Story</span>
+          {story && source && source !== "fresh" && <SourceBadge source={source} />}
         </div>
         {story ? (
           <>
@@ -234,5 +247,45 @@ function StorySkeleton() {
       <div className="h-4 bg-canvas-sunken rounded animate-pulse-soft w-10/12" />
       <div className="h-4 bg-canvas-sunken rounded animate-pulse-soft w-7/12" />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SourceBadge — small indicator showing whether the story was served
+// from cache. Hidden when the story was generated fresh this visit.
+// ---------------------------------------------------------------------------
+
+function SourceBadge({
+  source,
+}: {
+  source: NonNullable<Props["source"]>;
+}) {
+  const label =
+    source === "static"
+      ? "From the archive"
+      : source === "story-cache"
+        ? "Served from cache"
+        : source === "research-cache"
+          ? "Reused research"
+          : source === "fallback"
+            ? "Short sketch"
+            : null;
+  if (!label) return null;
+  return (
+    <span
+      title={
+        source === "static"
+          ? "This story was hand-written from verified public sources — served from the project archive."
+          : source === "story-cache"
+            ? "This story was generated once and is being reused for everyone — saves Tavily + LLM credits."
+            : source === "research-cache"
+              ? "The research behind this story was cached from an earlier visit — only the LLM was re-run."
+              : "Not enough verified history was found to write a longer story."
+      }
+      className="inline-flex items-center gap-1 text-2xs uppercase tracking-[0.14em] text-ink-tertiary border border-line rounded-full px-2 py-0.5"
+    >
+      <span className="h-1 w-1 rounded-full bg-accent" aria-hidden />
+      {label}
+    </span>
   );
 }

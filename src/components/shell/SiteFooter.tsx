@@ -1,5 +1,20 @@
-import Link from "next/link";
+"use client";
 
+import { ProtectedLink } from "./ProtectedLink";
+
+/**
+ * SiteFooter — auth-aware footer.
+ *
+ * All product links route through `/login?next=...` for signed-out
+ * visitors via <ProtectedLink>. This way the footer never offers a
+ * clickable destination that bounces the visitor through an unauth
+ * screen.
+ *
+ * Note: the footer intentionally does NOT include "Sign in" — the
+ * header is the canonical entry point for that — but it does include
+ * a single "Browse the markets" link to /login?next=/explore so a
+ * signed-out visitor who scrolls all the way down has somewhere to go.
+ */
 export function SiteFooter() {
   return (
     <footer className="border-t border-line-subtle mt-section">
@@ -38,24 +53,36 @@ export function SiteFooter() {
             <div className="heading-eyebrow mb-3">Explore</div>
             <ul className="space-y-2 text-ink-secondary">
               <li>
-                <Link href="/ancestor" className="hover:text-ink-primary">
+                <ProtectedLink
+                  to="/ancestor"
+                  className="hover:text-ink-primary"
+                >
                   Ancestor
-                </Link>
+                </ProtectedLink>
               </li>
               <li>
-                <Link href="/lab" className="hover:text-ink-primary">
+                <ProtectedLink
+                  to="/lab"
+                  className="hover:text-ink-primary"
+                >
                   Market Lab
-                </Link>
+                </ProtectedLink>
               </li>
               <li>
-                <Link href="/universes" className="hover:text-ink-primary">
+                <ProtectedLink
+                  to="/universes"
+                  className="hover:text-ink-primary"
+                >
                   My Universes
-                </Link>
+                </ProtectedLink>
               </li>
               <li>
-                <Link href="/explore" className="hover:text-ink-primary">
+                <ProtectedLink
+                  to="/explore"
+                  className="hover:text-ink-primary"
+                >
                   Explore
-                </Link>
+                </ProtectedLink>
               </li>
             </ul>
           </div>
@@ -64,12 +91,12 @@ export function SiteFooter() {
             <div className="heading-eyebrow mb-3">Data</div>
             <ul className="space-y-2 text-ink-secondary">
               <li>
-                <Link
-                  href="/lab?tab=evidence"
+                <ProtectedLink
+                  to="/lab?tab=evidence"
                   className="hover:text-ink-primary"
                 >
                   API Evidence
-                </Link>
+                </ProtectedLink>
               </li>
               <li>
                 <a

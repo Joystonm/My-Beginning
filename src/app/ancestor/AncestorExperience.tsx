@@ -30,7 +30,9 @@ import {
 } from "@/components/ancestor/HistoricalComparison";
 import { CoinStory } from "@/components/ancestor/CoinStory";
 import { LineageBreadcrumb } from "@/components/ancestor/LineageBreadcrumb";
+import { LineageDriftCard } from "@/components/ancestor/LineageDriftCard";
 import type { LineageResult } from "@/lib/ancestor/types";
+import type { LineageDrift } from "@/lib/ancestor/drift";
 import type { CmcCryptocurrency } from "@/lib/cmc/types";
 import type { CoinStory as CoinStoryT } from "@/lib/stories/types";
 import { extractRawFeatures, normalizeUniverse } from "@/lib/ancestor/normalize";
@@ -58,8 +60,30 @@ interface StoryState {
   story: CoinStoryT | null;
   loading: boolean;
   error: string | null;
+  /**
+   * Where the story came from on the last successful fetch:
+   *   - "static"        → served from the curated archive (top 20 coins)
+   *   - "story-cache"  → served from a prior visitor's persisted story
+   *   - "research-cache" → reused cached research, ran the LLM
+   *   - "fresh"        → ran Tavily + LLM this time
+   *   - "fallback"     → neither LLM nor research produced a story
+   *   - null           → no fetch attempted yet
+   */
+  source:
+    | "static"
+    | "story-cache"
+    | "research-cache"
+    | "fresh"
+    | "fallback"
+    | null;
   /** Iteration token — bump to retry. */
   nonce: number;
+}
+
+interface DriftState {
+  drift: LineageDrift | null;
+  loading: boolean;
+  error: string | null;
 }
 
 const HISTORICAL_DAYS = 30;
@@ -99,7 +123,13 @@ function AncestorExperienceInner() {
     story: null,
     loading: false,
     error: null,
+    source: null,
     nonce: 0,
+  });
+  const [driftState, setDriftState] = useState<DriftState>({
+    drift: null,
+    loading: false,
+    error: null,
   });
 
   // Load universe (for autocomplete + base asset profile + radar context)
@@ -141,6 +171,7 @@ function AncestorExperienceInner() {
       setLineage(null);
       setError(null);
       setHistorical({ series: [], days: HISTORICAL_DAYS, loadedAt: null, error: null });
+      setDriftState({ drift: null, loading: false, error: null });
       return;
     }
     let cancelled = false;
@@ -223,11 +254,62 @@ function AncestorExperienceInner() {
     };
   }, [phase, lineage, symbol]);
 
+  // Load lineage drift — the "what's moving in the family" headline.
+  // Independent of the story fetch; allowed to fail without breaking
+  // the rest of the page.
+  useEffect(() => {
+    if (phase !== "ready" || !lineage || !symbol) {
+      setDriftState({ drift: null, loading: false, error: null });
+      return;
+    }
+    let cancelled = false;
+    setDriftState({ drift: null, loading: true, error: null });
+    (async () => {
+      try {
+        const res = await fetch("/api/ancestor/drift", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ symbol, limit: 250, windowDays: 30 }),
+        });
+        const json = (await res.json()) as
+          | { drift?: LineageDrift; error?: string }
+          | { error: string };
+        if (cancelled) return;
+        if (!res.ok) {
+          setDriftState({
+            drift: null,
+            loading: false,
+            error:
+              "error" in json && typeof json.error === "string"
+                ? json.error
+                : "Drift unavailable.",
+          });
+          return;
+        }
+        setDriftState({
+          drift: "drift" in json ? json.drift ?? null : null,
+          loading: false,
+          error: null,
+        });
+      } catch (err) {
+        if (cancelled) return;
+        setDriftState({
+          drift: null,
+          loading: false,
+          error: err instanceof Error ? err.message : "Drift lookup failed.",
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [phase, lineage, symbol]);
+
   // Load the story independently of the lineage. The story is allowed to
   // fail without breaking the rest of the page.
   useEffect(() => {
     if (phase !== "ready" || !lineage || !symbol) {
-      setStoryState({ story: null, loading: false, error: null, nonce: 0 });
+      setStoryState({ story: null, loading: false, error: null, source: null, nonce: 0 });
       return;
     }
     let cancelled = false;
@@ -243,7 +325,7 @@ function AncestorExperienceInner() {
           }),
         });
         const json = (await res.json()) as
-          | { story?: CoinStoryT; error?: string }
+          | { story?: CoinStoryT; source?: StoryState["source"]; error?: string }
           | { error: string };
         if (cancelled) return;
         if (!res.ok || !("story" in json) || !json.story) {
@@ -254,14 +336,18 @@ function AncestorExperienceInner() {
               "error" in json && typeof json.error === "string"
                 ? json.error
                 : "Story unavailable.",
+            source: null,
             nonce: storyState.nonce,
           });
           return;
         }
+        const source =
+          "source" in json && json.source ? json.source : null;
         setStoryState({
           story: json.story,
           loading: false,
           error: null,
+          source,
           nonce: storyState.nonce,
         });
       } catch (err) {
@@ -270,6 +356,7 @@ function AncestorExperienceInner() {
           story: null,
           loading: false,
           error: err instanceof Error ? err.message : "Story lookup failed.",
+          source: null,
           nonce: storyState.nonce,
         });
       }
@@ -286,6 +373,7 @@ function AncestorExperienceInner() {
       story: null,
       loading: false,
       error: null,
+      source: null,
       nonce: s.nonce + 1,
     }));
     // Bumping the nonce triggers the same effect to refetch.
@@ -310,7 +398,7 @@ function AncestorExperienceInner() {
           }),
         });
         const json = (await res.json()) as
-          | { story?: CoinStoryT; error?: string };
+          | { story?: CoinStoryT; source?: StoryState["source"]; error?: string };
         if (cancelled) return;
         if (!res.ok || !("story" in json) || !json.story) {
           setStoryState({
@@ -320,14 +408,18 @@ function AncestorExperienceInner() {
               "error" in json && typeof json.error === "string"
                 ? json.error
                 : "Story unavailable.",
+            source: null,
             nonce: storyState.nonce,
           });
           return;
         }
+        const source =
+          "source" in json && json.source ? json.source : null;
         setStoryState({
           story: json.story,
           loading: false,
           error: null,
+          source,
           nonce: storyState.nonce,
         });
       } catch (err) {
@@ -336,6 +428,7 @@ function AncestorExperienceInner() {
           story: null,
           loading: false,
           error: err instanceof Error ? err.message : "Story lookup failed.",
+          source: null,
           nonce: storyState.nonce,
         });
       }
@@ -541,7 +634,11 @@ function AncestorExperienceInner() {
             story={storyState.story}
             storyLoading={storyState.loading}
             storyError={storyState.error}
+            storySource={storyState.source}
             onRetryStory={handleRetryStory}
+            drift={driftState.drift}
+            driftLoading={driftState.loading}
+            driftError={driftState.error}
           />
         )}
       </section>
@@ -563,7 +660,17 @@ interface ReadyViewProps {
   story: CoinStoryT | null;
   storyLoading: boolean;
   storyError: string | null;
+  storySource:
+    | "static"
+    | "story-cache"
+    | "research-cache"
+    | "fresh"
+    | "fallback"
+    | null;
   onRetryStory: () => void;
+  drift: LineageDrift | null;
+  driftLoading: boolean;
+  driftError: string | null;
 }
 
 function ReadyView({
@@ -580,7 +687,11 @@ function ReadyView({
   story,
   storyLoading,
   storyError,
+  storySource,
   onRetryStory,
+  drift,
+  driftLoading,
+  driftError,
 }: ReadyViewProps) {
   const ancestors = lineage.ancestors;
   const edges = lineage.edges;
@@ -601,6 +712,7 @@ function ReadyView({
         story={story}
         loading={storyLoading}
         error={storyError}
+        source={storySource}
         onRetry={onRetryStory}
       />
 
@@ -651,6 +763,16 @@ function ReadyView({
         <UniverseContext base={baseFeatures} universe={universeFeatures} />
       </div>
 
+      {/* Lineage drift — "what's moving in the family" */}
+      {(drift || driftLoading || driftError) && (
+        <LineageDriftCard
+          drift={drift}
+          loading={driftLoading}
+          error={driftError}
+          onSelectSymbol={onDrillDown}
+        />
+      )}
+
       {/* Historical (base only) */}
       <HistoricalComparison
         baseSymbol={lineage.base}
@@ -679,7 +801,7 @@ function ReadyView({
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             {ancestors.map((a, i) => (
               <div
-                key={a.symbol}
+                key={`${a.symbol}-${i}`}
                 className={cn(
                   "transition-opacity duration-180",
                   selectedAncestor !== null && selectedAncestor !== i && "opacity-60",

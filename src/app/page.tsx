@@ -1,7 +1,31 @@
-import Link from "next/link";
 import { Eyebrow, Panel, PanelHeader } from "@/components/design-system";
+import { ProtectedLink } from "@/components/shell/ProtectedLink";
+import { getCurrentUser } from "@/lib/supabase/server";
 
-export default function HomePage() {
+/**
+ * Marketing landing page at `/`.
+ *
+ * This route is reachable by everyone — signed in or not — so we do
+ * NOT redirect here. Protected sub-routes (`/ancestor`, `/lab`,
+ * `/explore`, `/universes`) remain gated by their own server-side
+ * `requireUser()` guards.
+ *
+ * Every CTA on this page that points at a protected destination uses
+ * <ProtectedLink />, which routes a signed-out visitor through
+ * `/login?next=<destination>` so the post-login redirect lands them
+ * where they wanted to go.
+ *
+ * We resolve the current user server-side to:
+ *   1. Render the correct hero CTA copy ("Find an ancestor" vs.
+ *      "Sign in to find an ancestor").
+ *   2. Hydrate the AuthProvider in the root layout with the SSR-known
+ *      `initialUser`, so the first paint already knows whether the
+ *      visitor is signed in and doesn't flash a "Sign in" header.
+ */
+export default async function HomePage() {
+  const user = await getCurrentUser();
+  const signedIn = Boolean(user);
+
   return (
     <div className="py-14 sm:py-20">
       {/* Hero */}
@@ -14,18 +38,18 @@ export default function HomePage() {
             <span className="text-ink-secondary">Find yours.</span>
           </h1>
           <p className="mt-5 text-md text-ink-secondary leading-relaxed max-w-xl">
-            Who Is My Ancestor traces a cryptocurrency's real lineage — code
-            forks, native tokens on other chains, wrapped versions, and
+            Who Is My Ancestor traces a cryptocurrency&apos;s real lineage —
+            code forks, native tokens on other chains, wrapped versions, and
             inspiration chains — calculated from a curated ancestor graph and
             enriched with live web lookups via Tavily.
           </p>
 
           <div className="mt-7 flex flex-wrap items-center gap-3">
-            <Link
-              href="/ancestor"
+            <ProtectedLink
+              to="/ancestor"
               className="inline-flex items-center gap-2 rounded-[4px] bg-ink-primary text-ink-inverse text-md h-11 px-5 hover:bg-[#1c1c1c] transition-colors duration-180"
             >
-              Find an ancestor
+              {signedIn ? "Find an ancestor" : "Sign in to find an ancestor"}
               <svg
                 viewBox="0 0 16 16"
                 className="h-3.5 w-3.5"
@@ -35,13 +59,13 @@ export default function HomePage() {
               >
                 <path d="M3 8h10M9 4l4 4-4 4" />
               </svg>
-            </Link>
-            <Link
-              href="/lab"
+            </ProtectedLink>
+            <ProtectedLink
+              to="/lab"
               className="inline-flex items-center gap-2 rounded-[4px] bg-canvas text-ink-primary text-md h-11 px-5 border border-line-strong hover:bg-canvas-sunken transition-colors duration-180"
             >
-              Open Market Lab
-            </Link>
+              {signedIn ? "Open Market Lab" : "Sign in to open Market Lab"}
+            </ProtectedLink>
           </div>
 
           <div className="mt-10 grid grid-cols-3 gap-x-6 gap-y-2 max-w-md text-sm">
@@ -63,7 +87,10 @@ export default function HomePage() {
               <LineagePreviewSvg />
               <p className="mt-5 text-xs text-ink-tertiary leading-relaxed">
                 Illustrative preview. Real results are computed live from
-                CoinMarketCap&apos;s <code className="font-mono">/v1/cryptocurrency/listings/latest</code>{" "}
+                CoinMarketCap&apos;s{" "}
+                <code className="font-mono">
+                  /v1/cryptocurrency/listings/latest
+                </code>{" "}
                 endpoint and enriched with Tavily web lookups.
               </p>
             </div>
@@ -108,24 +135,28 @@ export default function HomePage() {
             label="Ancestor"
             title="The flagship experience"
             body="Find a cryptocurrency and walk its lineage. Every edge is labeled with its relation type and the confidence in the claim."
+            cta={signedIn ? "Open Ancestor" : "Sign in to open Ancestor"}
           />
           <Feature
             href="/lab"
             label="Market Lab"
             title="A professional analytics workspace"
             body="Global metrics, side-by-side asset comparison, custom metric builder, and a data explorer — all driven by the same CoinMarketCap data."
+            cta={signedIn ? "Open Market Lab" : "Sign in to open Market Lab"}
           />
           <Feature
             href="/universes"
             label="My Universes"
             title="Your collections of assets"
             body="Group assets by theme, narrative or experiment. Open any universe in Market Lab to compare what matters to you."
+            cta={signedIn ? "Open My Universes" : "Sign in to open My Universes"}
           />
           <Feature
             href="/explore"
             label="Explore"
             title="The CMC universe at a glance"
             body="Search, sort and filter the broader market. A discovery surface for finding new lineages."
+            cta={signedIn ? "Open Explore" : "Sign in to open Explore"}
           />
         </div>
       </section>
@@ -143,9 +174,11 @@ export default function HomePage() {
               {[
                 "/v1/cryptocurrency/listings/latest",
                 "/v1/cryptocurrency/quotes/latest",
+                "/v1/cryptocurrency/quotes/historical",
                 "/v1/cryptocurrency/info",
                 "/v1/cryptocurrency/market-pairs/latest",
                 "/v1/global-metrics/quotes/latest",
+                "/v1/global-metrics/quotes/historical",
                 "/v1/exchange/listings/latest",
               ].map((e) => (
                 <li
@@ -161,12 +194,12 @@ export default function HomePage() {
                 API keys never leave the server. The /api/cmc/evidence route
                 shows a sanitized call log so judges can verify usage.
               </p>
-              <Link
-                href="/lab?tab=evidence"
+              <ProtectedLink
+                to="/lab?tab=evidence"
                 className="shrink-0 text-sm text-accent hover:underline"
               >
                 See evidence →
-              </Link>
+              </ProtectedLink>
             </div>
           </div>
         </Panel>
@@ -199,15 +232,17 @@ function Feature({
   label,
   title,
   body,
+  cta,
 }: {
   href: string;
   label: string;
   title: string;
   body: string;
+  cta: string;
 }) {
   return (
-    <Link
-      href={href}
+    <ProtectedLink
+      to={href}
       className="block rounded-[6px] border border-line bg-canvas p-6 hover:border-line-strong hover:bg-canvas-sunken/30 transition-colors duration-180"
     >
       <div className="heading-eyebrow">{label}</div>
@@ -215,8 +250,8 @@ function Feature({
         {title}
       </h3>
       <p className="text-sm text-ink-secondary leading-relaxed">{body}</p>
-      <div className="mt-4 text-sm text-accent">Open →</div>
-    </Link>
+      <div className="mt-4 text-sm text-accent">{cta} →</div>
+    </ProtectedLink>
   );
 }
 
@@ -259,7 +294,15 @@ function LineagePreviewSvg() {
         fill="none"
       />
       <defs>
-        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <marker
+          id="arrow"
+          viewBox="0 0 10 10"
+          refX={9}
+          refY={5}
+          markerWidth={6}
+          markerHeight={6}
+          orient="auto-start-reverse"
+        >
           <path d="M0,0 L10,5 L0,10 z" fill="#CFCCC3" />
         </marker>
       </defs>
@@ -267,10 +310,23 @@ function LineagePreviewSvg() {
       {/* SOL node */}
       <g transform="translate(120, 16)">
         <rect width={120} height={48} rx={5} fill="#0E0E0E" />
-        <text x={60} y={22} textAnchor="middle" fill="#FAF8F4" fontSize={14} fontWeight={600}>
+        <text
+          x={60}
+          y={22}
+          textAnchor="middle"
+          fill="#FAF8F4"
+          fontSize={14}
+          fontWeight={600}
+        >
           SOL
         </text>
-        <text x={60} y={38} textAnchor="middle" fill="#B4B4AE" fontSize={10}>
+        <text
+          x={60}
+          y={38}
+          textAnchor="middle"
+          fill="#B4B4AE"
+          fontSize={10}
+        >
           Solana
         </text>
       </g>
@@ -282,10 +338,23 @@ function LineagePreviewSvg() {
       {/* ETH node */}
       <g transform="translate(120, 100)">
         <rect width={120} height={48} rx={5} fill="#FFFFFF" stroke="#CFCCC3" />
-        <text x={60} y={22} textAnchor="middle" fill="#0E0E0E" fontSize={14} fontWeight={600}>
+        <text
+          x={60}
+          y={22}
+          textAnchor="middle"
+          fill="#0E0E0E"
+          fontSize={14}
+          fontWeight={600}
+        >
           ETH
         </text>
-        <text x={60} y={38} textAnchor="middle" fill="#5C5C58" fontSize={10}>
+        <text
+          x={60}
+          y={38}
+          textAnchor="middle"
+          fill="#5C5C58"
+          fontSize={10}
+        >
           Ethereum
         </text>
       </g>
@@ -297,7 +366,14 @@ function LineagePreviewSvg() {
       {/* BTC node */}
       <g transform="translate(120, 164)">
         <rect width={120} height={32} rx={4} fill="#FFFFFF" stroke="#CFCCC3" />
-        <text x={60} y={20} textAnchor="middle" fill="#0E0E0E" fontSize={13} fontWeight={600}>
+        <text
+          x={60}
+          y={20}
+          textAnchor="middle"
+          fill="#0E0E0E"
+          fontSize={13}
+          fontWeight={600}
+        >
           BTC · Bitcoin
         </text>
       </g>

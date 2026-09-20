@@ -3,6 +3,7 @@ import { getGlobalMetrics, getListingsLatest } from "@/lib/cmc/client";
 import { isApiKeyConfigured } from "@/lib/cmc";
 import { MarketLab } from "@/components/lib/lab/MarketLab";
 import { Eyebrow } from "@/components/design-system";
+import { requireUser } from "@/lib/auth/guard";
 
 export const metadata: Metadata = {
   title: "Market Lab",
@@ -17,6 +18,8 @@ export default async function LabPage({
 }: {
   searchParams: { tab?: string };
 }) {
+  await requireUser("/lab");
+
   let universe: Awaited<ReturnType<typeof getListingsLatest>> = [];
   let global = null;
   let universeError: string | null = null;

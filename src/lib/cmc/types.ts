@@ -118,19 +118,67 @@ export interface CmcExchange {
   market_share?: number;
 }
 
+/**
+ * Global market metrics — shape returned by
+ * `GET /v1/global-metrics/quotes/latest`.
+ *
+ * NOTE: The historical v3 docs and our internal type were modelled on
+ * an older shape where `total_market_cap`, `total_volume_24h` and
+ * `market_cap_percentage` lived at the top level of `data`. The
+ * current CMC response nests the totals under `quote.USD` and exposes
+ * dominance as flat `btc_dominance` / `eth_dominance` fields instead
+ * of a `market_cap_percentage` map.
+ *
+ * Reference shape (from CMC Pro API docs):
+ *
+ * ```json
+ * {
+ *   "active_cryptocurrencies": 8176,
+ *   "active_exchanges": 978,
+ *   "active_market_pairs": 116587,
+ *   "btc_dominance": 52.3,
+ *   "eth_dominance": 17.8,
+ *   "last_updated": "2026-09-12T...",
+ *   "quote": {
+ *     "USD": {
+ *       "total_market_cap": 3500000000000,
+ *       "total_volume_24h": 150000000000,
+ *       "total_volume_24h_reported": 150000000000,
+ *       "market_cap_change_percentage_24h_usd": 0.5
+ *     }
+ *   }
+ * }
+ * ```
+ */
 export interface CmcGlobalMetrics {
   active_cryptocurrencies: number;
-  active_exchanges: number;
+  total_cryptocurrencies?: number;
   active_market_pairs: number;
-  total_volume_24h: number;
-  total_volume_24h_reported: number;
-  total_market_cap: number;
-  total_market_cap_yesterday_percentage_change?: number;
-  total_volume_24h_yesterday_percentage_change?: number;
-  market_cap_percentage: Record<string, number>;
-  market_cap_change_percentage_24h_usd?: number;
-  volume_change_percentage_24h_usd?: number;
-  updated_at?: string;
+  active_exchanges: number;
+  total_exchanges?: number;
+  /** Bitcoin dominance percentage (0..100). */
+  btc_dominance: number;
+  /** Ethereum dominance percentage (0..100). */
+  eth_dominance: number;
+  last_updated?: string;
+  /**
+   * Conversion-keyed totals. The historical endpoint exposes the same
+   * shape per-point, so the historical quote-point type is a subset of
+   * this.
+   */
+  quote: Record<
+    "USD",
+    {
+      total_market_cap: number;
+      total_volume_24h: number;
+      total_volume_24h_reported: number;
+      altcoin_volume_24h?: number;
+      altcoin_volume_24h_reported?: number;
+      altcoin_market_cap?: number;
+      market_cap_change_percentage_24h_usd?: number;
+      last_updated?: string;
+    }
+  >;
 }
 
 export interface CmcHistoricalQuotePoint {

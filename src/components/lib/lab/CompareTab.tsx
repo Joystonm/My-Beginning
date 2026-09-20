@@ -66,17 +66,10 @@ export function CompareTab({ universe }: Props) {
     setSelected(selected.filter((s) => s !== sym));
   }
 
-  if (items.length === 0) {
-    return (
-      <StateBlock
-        eyebrow="Compare"
-        title="Add at least one asset"
-        description="Use the search below to add cryptocurrencies to the comparison."
-      />
-    );
-  }
-
   // Radar data: normalize each metric to its rank within the universe.
+  // NOTE: this useMemo MUST run before any early return so the hook
+  // count stays stable across renders — React requires hooks to be
+  // called in the same order every time.
   const radarData = useMemo(() => {
     const dims = [
       { id: "market_cap", label: "Market cap", accessor: (c: CmcCryptocurrency) => c.quote?.USD?.market_cap ?? 0 },
@@ -111,6 +104,16 @@ export function CompareTab({ universe }: Props) {
       return row;
     });
   }, [items, universe]);
+
+  if (items.length === 0) {
+    return (
+      <StateBlock
+        eyebrow="Compare"
+        title="Add at least one asset"
+        description="Use the search below to add cryptocurrencies to the comparison."
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">

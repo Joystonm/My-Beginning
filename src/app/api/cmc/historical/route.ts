@@ -48,7 +48,10 @@ export async function POST(req: NextRequest) {
   const symbols = (body.symbols ?? [])
     .map((s) => s.trim().toUpperCase())
     .filter(Boolean)
-    .slice(0, 6);
+    // Cap was 6 for /ancestor's base+peer set; bumped to 30 so /explore
+    // can fetch ~12 sparklines in one round-trip. Hard upper bound stays
+    // so a typo can't OOM the server.
+    .slice(0, 30);
   if (symbols.length === 0) {
     return NextResponse.json(
       { error: "Provide at least one symbol." },

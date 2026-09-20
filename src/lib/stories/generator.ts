@@ -299,6 +299,10 @@ function parseStoryResponse(
  * A short deterministic "I am <Name>" fallback used when the LLM is not
  * configured or fails. It only uses facts the research layer verified, so
  * it's still honest about what we don't know.
+ *
+ * Even with a single verified fact (e.g. "XRP was launched in 2012")
+ * we write a real short story rather than refusing — we just keep
+ * the tone factual and avoid padding with invention.
  */
 export function fallbackStory(
   symbol: string,
@@ -314,34 +318,52 @@ export function fallbackStory(
 
   if (knownFacts.length === 0) {
     paragraphs.push(
-      `I don't have reliable, verified history about myself yet — the curated sources we trust couldn't agree on enough details to tell my story without invention.`,
+      `I don't have a confident history written about me yet — the sources we found on the open web didn't surface a clean founding date, a named creator, or a verifiable origin story, and I'd rather say so than make one up.`,
+    );
+    paragraphs.push(
+      `If you know the year I was created, the team behind me, or the paper that introduced me, the sources below are a starting point for writing it down.`,
     );
   } else {
-    const first = knownFacts[0]!;
-    const rest = knownFacts.slice(1, 4);
-    if (first.date) {
-      paragraphs.push(`My story begins in ${first.date}. ${first.claim}`);
-    } else {
-      paragraphs.push(`${first.claim}`);
-    }
-    for (const f of rest) {
+    // Order facts chronologically where possible (oldest first).
+    const datedFacts = knownFacts
+      .filter((f): f is HistoricalFact & { date: string } => Boolean(f.date))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    const undatedFacts = knownFacts.filter((f) => !f.date);
+
+    if (datedFacts.length > 0) {
+      const first = datedFacts[0]!;
       paragraphs.push(
-        f.date ? `In ${f.date}, ${f.claim.toLowerCase()}` : f.claim,
+        `My story begins in ${first.date}. ${stripTrailingPeriod(first.claim)}`,
+      );
+      for (const f of datedFacts.slice(1, 5)) {
+        paragraphs.push(`In ${f.date}, ${lowerFirst(stripTrailingPeriod(f.claim))}.`);
+      }
+    }
+
+    for (const f of undatedFacts.slice(0, 2)) {
+      paragraphs.push(`${stripTrailingPeriod(f.claim)}.`);
+    }
+
+    // Soft close — only when we have at least one date-based fact.
+    if (datedFacts.length > 0) {
+      paragraphs.push(
+        `Today I am known as ${sym}, and the rest of my story is still being written.`,
+      );
+    } else {
+      paragraphs.push(
+        `If you want to know more about ${sym}, the sources below collect what historians and journalists have written so far.`,
       );
     }
-    paragraphs.push(
-      `Today I am known as ${sym}, and the rest of my story is still being written.`,
-    );
   }
 
-  const timeline: TimelinePoint[] = knownFacts
-    .filter((f) => f.date !== null)
-    .slice(0, 5)
-    .map((f, i) => ({
-      date: f.date!,
-      label: truncate(f.claim, 60),
-      paragraphIndex: Math.min(i + 1, paragraphs.length - 1),
-    }));
+  const datedForTimeline = facts
+    .filter((f): f is HistoricalFact & { date: string } => Boolean(f.date))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const timeline: TimelinePoint[] = datedForTimeline.slice(0, 6).map((f, i) => ({
+    date: f.date,
+    label: truncate(f.claim, 60),
+    paragraphIndex: Math.min(i + 1, paragraphs.length - 1),
+  }));
 
   return {
     symbol: sym,
@@ -355,6 +377,15 @@ export function fallbackStory(
     generatedAt: new Date().toISOString(),
     fallback: true,
   };
+}
+
+function stripTrailingPeriod(s: string): string {
+  return s.replace(/\.+$/, "");
+}
+
+function lowerFirst(s: string): string {
+  if (!s) return s;
+  return s.charAt(0).toLowerCase() + s.slice(1);
 }
 
 function truncate(s: string, max: number): string {

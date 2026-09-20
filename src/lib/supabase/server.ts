@@ -6,6 +6,24 @@ import { SUPABASE_ANON_KEY, SUPABASE_URL } from "./env";
 /**
  * Server-side Supabase client bound to the current request cookies.
  * Returns null when env vars are missing (dev-safe fallback).
+ *
+ * IMPORTANT — Next.js 14 cookie semantics:
+ *
+ *   In Next.js 14, mutating cookies inside a route handler ONLY works
+ *   through the `cookies().set(...)` call that Next.js observes.
+ *   `cookies().set()` throws if the response has already started, so
+ *   the only safe pattern is to use the `getAll` / `setAll` pair: the
+ *   Supabase client gives us a batch of writes, we apply each one to
+ *   the Next.js cookie store.
+ *
+ *   The older `get` / `set` / `remove` callbacks work in Server
+ *   Components and Server Actions, but in route handlers they silently
+ *   no-op — which is what was causing the 401 / 500 errors on
+ *   /api/universes after sign-in (the auth cookies were never written
+ *   to the response).
+ *
+ *   See https://supabase.com/docs/guides/auth/server-side/nextjs for
+ *   the canonical pattern.
  */
 export function getSupabaseServerClient() {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
@@ -14,21 +32,23 @@ export function getSupabaseServerClient() {
 
   return createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     cookies: {
-      get(name: string) {
-        return cookieStore.get(name)?.value;
+      getAll() {
+        return cookieStore.getAll().map(({ name, value }) => ({
+          name,
+          value,
+        }));
       },
-      set(name: string, value: string, options: CookieOptions) {
+      setAll(cookiesToSet: { name: string; value: string; options: CookieOptions }[]) {
         try {
-          cookieStore.set({ name, value, ...options });
+          for (const { name, value, options } of cookiesToSet) {
+            cookieStore.set(name, value, options);
+          }
         } catch {
-          // ignore — happens in some read-only contexts
-        }
-      },
-      remove(name: string, options: CookieOptions) {
-        try {
-          cookieStore.set({ name, value: "", ...options });
-        } catch {
-          // ignore
+          // The `set` method was called from a Server Component or a
+          // read-only context (e.g. a static render). In those cases
+          // the cookies cannot be mutated, but Supabase has already
+          // done what it needed to — we just can't write them back.
+          // Next.js will silently drop the writes here.
         }
       },
     },

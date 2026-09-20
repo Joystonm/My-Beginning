@@ -99,33 +99,37 @@ export function OverviewTab({ global, universe, error }: Props) {
     );
   }
 
-  const dominance = global.market_cap_percentage ?? {};
-  const btcDominance = dominance["btc"] ?? 0;
-  const ethDominance = dominance["eth"] ?? 0;
+  // CMC's /v1/global-metrics/quotes/latest nests totals under `quote.USD`
+  // and exposes dominance as flat fields. Older docs showed a
+  // `market_cap_percentage` map and top-level totals — that's not what
+  // the endpoint actually returns anymore, so we read from the new
+  // shape directly.
+  const usd = global.quote.USD;
+  const btcDominance = global.btc_dominance ?? 0;
+  const ethDominance = global.eth_dominance ?? 0;
+  const change24h = usd.market_cap_change_percentage_24h_usd ?? 0;
 
   return (
     <div className="space-y-6">
       {source && <SeedNotice source={source} seed={seed} />}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-line border border-line rounded-[6px] overflow-hidden">
-        <Stat label="Total market cap" value={formatUsd(global.total_market_cap, { compact: true })} />
+        <Stat label="Total market cap" value={formatUsd(usd.total_market_cap, { compact: true })} />
         <Stat
           label="24h change"
-          value={formatPercent(global.market_cap_change_percentage_24h_usd ?? 0)}
-          tone={
-            (global.market_cap_change_percentage_24h_usd ?? 0) >= 0
-              ? "positive"
-              : "negative"
-          }
+          value={formatPercent(change24h)}
+          tone={change24h >= 0 ? "positive" : "negative"}
         />
-        <Stat label="24h volume" value={formatUsd(global.total_volume_24h, { compact: true })} />
+        <Stat label="24h volume" value={formatUsd(usd.total_volume_24h, { compact: true })} />
         <Stat label="Active assets" value={global.active_cryptocurrencies.toLocaleString()} />
         <Stat label="BTC dominance" value={`${btcDominance.toFixed(2)}%`} />
         <Stat label="ETH dominance" value={`${ethDominance.toFixed(2)}%`} />
         <Stat label="Active exchanges" value={global.active_exchanges.toLocaleString()} />
         <Stat
           label="Active pairs"
-          value={global.active_market_pairs?.toLocaleString() ?? "—"}
+          // Force en-US locale — some browsers default to en-IN and render
+          // 116587 as "1,16,587", which is meaningless for a market count.
+          value={global.active_market_pairs?.toLocaleString("en-US") ?? "—"}
         />
       </div>
 

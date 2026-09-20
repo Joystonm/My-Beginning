@@ -65,6 +65,7 @@ export async function POST(req: NextRequest) {
       story: result.story,
       cached: result.cached,
       fallback: result.fallback,
+      source: result.source,
       config: {
         tavily_configured: isTavilyConfigured(),
         llm_configured: isStoryGeneratorConfigured(),
