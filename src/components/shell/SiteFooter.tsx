@@ -40,7 +40,7 @@ export function SiteFooter() {
                 </svg>
               </span>
               <span className="text-md font-medium tracking-tight">
-                Who Is My Ancestor
+                My Beginning
               </span>
             </div>
             <p className="text-ink-secondary text-sm leading-relaxed max-w-xs">
@@ -128,7 +128,7 @@ export function SiteFooter() {
             Market data provided by CoinMarketCap. Not financial advice.
           </span>
           <span>
-            © {new Date().getFullYear()} Who Is My Ancestor. A hackathon
+            © {new Date().getFullYear()} My Beginning. A hackathon
             project.
           </span>
         </div>

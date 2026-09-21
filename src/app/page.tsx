@@ -38,7 +38,7 @@ export default async function HomePage() {
             <span className="text-ink-secondary">Find yours.</span>
           </h1>
           <p className="mt-5 text-md text-ink-secondary leading-relaxed max-w-xl">
-            Who Is My Ancestor traces a cryptocurrency&apos;s real lineage —
+            My Beginning traces a cryptocurrency&apos;s real lineage —
             code forks, native tokens on other chains, wrapped versions, and
             inspiration chains — calculated from a curated ancestor graph and
             enriched with live web lookups via Tavily.

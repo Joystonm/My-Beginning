@@ -1,297 +1,330 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
+  Badge,
+  Button,
   Eyebrow,
   Input,
-  Label,
   Panel,
   PanelBody,
   PanelHeader,
-  Textarea,
-  Tabs,
 } from "@/components/design-system";
-import type { ParsedQuery } from "@/lib/ai/parser";
-import { labelForMetric } from "@/lib/ai/parser";
 
-export function AiTab() {
-  return (
-    <Tabs
-      tabs={[
-        { id: "ask", label: "Ask in Lab", content: <AskPanel /> },
-        { id: "ancestor", label: "Explain a relationship", content: <ExplainPanel /> },
-      ]}
-    />
-  );
+type Role = "user" | "assistant";
+
+interface ChatMessage {
+  role: Role;
+  content: string;
+  /** Tools the assistant invoked during this turn, for transparency. */
+  tools?: { tool: string; input: Record<string, unknown> }[];
 }
 
-function AskPanel() {
-  const [prompt, setPrompt] = useState(
-    "Show me the top 50 assets and compare their 7-day performance",
-  );
-  const [parsed, setParsed] = useState<ParsedQuery | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+const SUGGESTED = [
+  "Tell me about Ethereum's biggest descendants",
+  "What's the difference between a code fork and an inspiration chain?",
+  "Who founded Dogecoin and why?",
+  "What does \"platform token\" mean in My Beginning?",
+];
 
-  async function submit() {
-    setLoading(true);
-    setError(null);
+export function AiTab() {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState("");
+  const [streaming, setStreaming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [model, setModel] = useState<string | null>(null);
+  const [provider, setProvider] = useState<"anthropic" | "minimax" | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Conversations are intentionally ephemeral — nothing is read from or
+  // written to localStorage. We do clear any leftover history from older
+  // builds so users upgrading don't see stale messages.
+  useEffect(() => {
     try {
-      const res = await fetch("/api/ai/parse", {
+      window.localStorage.removeItem("wima.lab.chat.v1");
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // Auto-scroll to the bottom on new content.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, streaming]);
+
+  async function send(promptOverride?: string) {
+    const prompt = (promptOverride ?? input).trim();
+    if (!prompt || streaming) return;
+
+    const next: ChatMessage[] = [
+      ...messages,
+      { role: "user", content: prompt },
+      { role: "assistant", content: "", tools: [] },
+    ];
+    setMessages(next);
+    setInput("");
+    setError(null);
+    setStreaming(true);
+
+    // Hand the history (without the empty placeholder) to the server.
+    const history = next.filter((m) => !(m.role === "assistant" && m.content === ""));
+
+    try {
+      const res = await fetch("/api/lab/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ messages: history }),
       });
-      const json = (await res.json()) as { parsed?: ParsedQuery; error?: string };
-      if (!res.ok) {
-        setError(json.error ?? "Failed to parse prompt.");
-        return;
+
+      if (!res.ok || !res.body) {
+        const json = await safeJson(res);
+        throw new Error(json.error ?? `Request failed (${res.status}).`);
       }
-      setParsed(json.parsed ?? null);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Process complete SSE events (delimited by blank lines).
+        let boundary;
+        while ((boundary = buffer.indexOf("\n\n")) !== -1) {
+          const rawEvent = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          for (const line of rawEvent.split("\n")) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) continue;
+            const data = trimmed.slice(5).trim();
+            if (data === "[DONE]") continue;
+            try {
+              const event = JSON.parse(data) as
+                | { type: "text"; text: string }
+                | { type: "tool"; tool: string; input: Record<string, unknown> }
+                | { type: "meta"; model: string; provider: "anthropic" | "minimax" }
+                | { type: "error"; message: string };
+              applyEvent(event, setMessages, setModel, setProvider, setError);
+            } catch {
+              /* malformed line — skip */
+            }
+          }
+        }
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unexpected error.");
+      setError(err instanceof Error ? err.message : "Chat failed.");
+      // Drop the empty assistant placeholder.
+      setMessages((prev) => prev.filter((m) => m.content !== ""));
     } finally {
-      setLoading(false);
+      setStreaming(false);
     }
   }
 
-  return (
-    <div className="space-y-6">
-      <Panel>
-        <PanelHeader
-          eyebrow="Ask in Lab"
-          title="Natural-language queries → structured view"
-          description="The parser is rule-based and deterministic. The AI never invents market facts — it only translates your intent into a Data Explorer configuration."
-        />
-        <PanelBody>
-          <Label htmlFor="lab-prompt">Your query</Label>
-          <Textarea
-            id="lab-prompt"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="e.g. Compare the top 20 assets by 30-day performance."
-          />
-          <div className="mt-3 flex items-center justify-between">
-            <p className="text-xs text-ink-tertiary">
-              Examples:{" "}
-              {[
-                "Top 100 by market cap, ranked",
-                "Today's top gainers, percentile",
-                "Compare the top 20 by 7-day performance",
-              ].map((ex) => (
-                <button
-                  key={ex}
-                  onClick={() => setPrompt(ex)}
-                  className="mr-2 text-ink-secondary hover:text-ink-primary underline-offset-2 hover:underline"
-                >
-                  {ex}
-                </button>
-              ))}
-            </p>
-            <button
-              onClick={submit}
-              disabled={loading || !prompt.trim()}
-              className="rounded-[4px] bg-ink-primary text-ink-inverse text-sm h-8 px-3 hover:bg-[#1c1c1c] disabled:opacity-50 transition-colors duration-180"
-            >
-              {loading ? "Parsing…" : "Parse"}
-            </button>
-          </div>
-          {error && (
-            <p className="mt-3 text-sm text-signal-negative">{error}</p>
-          )}
-        </PanelBody>
-      </Panel>
+  function clear() {
+    if (!window.confirm("Clear the conversation?")) return;
+    setMessages([]);
+    setError(null);
+  }
 
-      {parsed && (
-        <Panel>
-          <PanelHeader
-            eyebrow="Structured query"
-            title="What your query became"
-            description="Send these values into the Data Explorer and the visualization will follow."
+  const isEmpty = messages.length === 0;
+
+  return (
+    <Panel>
+      <PanelHeader
+        eyebrow="Ask in Lab"
+        title="Ask about crypto"
+        description="General questions about cryptocurrencies — history, founders, technology, family trees. This assistant does not have access to live prices."
+        actions={
+          <>
+            {provider && (
+              <Badge tone={provider === "minimax" ? "accent" : "muted"}>
+                {provider === "minimax" ? "MiniMax M3" : model ?? "AI"}
+              </Badge>
+            )}
+            {messages.length > 0 && (
+              <button
+                onClick={clear}
+                className="text-sm text-ink-tertiary hover:text-signal-negative transition-colors duration-180"
+                disabled={streaming}
+              >
+                Clear
+              </button>
+            )}
+          </>
+        }
+      />
+      <PanelBody className="!p-0">
+        <div
+          ref={scrollRef}
+          className="h-[480px] overflow-y-auto px-5 py-4 space-y-4"
+        >
+          {isEmpty && (
+            <EmptyState onPick={(q) => send(q)} />
+          )}
+          {messages.map((m, i) => (
+            <Bubble
+              key={i}
+              message={m}
+              isStreaming={streaming && i === messages.length - 1 && m.role === "assistant"}
+            />
+          ))}
+        </div>
+
+        {error && (
+          <div className="px-5 py-3 text-sm text-signal-negative border-t border-line-subtle bg-[#F8E6E2]/40">
+            {error}
+          </div>
+        )}
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void send();
+          }}
+          className="flex items-center gap-2 px-5 py-3 border-t border-line-subtle bg-canvas"
+        >
+          <Input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Ask about any coin, price, or family tree…"
+            disabled={streaming}
+            className="flex-1"
           />
-          <PanelBody>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-line border border-line rounded-[6px] overflow-hidden">
-              <Cell label="Dataset">
-                {parsed.dataset === "top"
-                  ? "Top by market cap"
-                  : parsed.dataset === "gainers"
-                    ? "Top 24h gainers"
-                    : "Top 24h losers"}
-              </Cell>
-              <Cell label="Top N">{parsed.top}</Cell>
-              <Cell label="Metric">{labelForMetric(parsed.metric)}</Cell>
-              <Cell label="Calculation">
-                {parsed.calculation === "raw"
-                  ? "Raw value"
-                  : parsed.calculation === "rank"
-                    ? "Rank in universe"
-                    : "Percentile"}
-              </Cell>
-            </div>
-            <p className="mt-4 text-sm text-ink-secondary">{parsed.description}</p>
-            <div className="mt-4 flex items-center gap-2 text-xs text-ink-tertiary">
-              <span className="heading-eyebrow">Matched rules</span>
-              {parsed.matchedRules.length === 0 ? (
-                <span>(defaults applied)</span>
-              ) : (
-                <div className="flex flex-wrap gap-1.5">
-                  {parsed.matchedRules.map((r) => (
-                    <span
-                      key={r}
-                      className="font-mono px-1.5 py-0.5 bg-canvas-sunken rounded-[3px]"
-                    >
-                      {r}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          </PanelBody>
-        </Panel>
+          <Button type="submit" disabled={!input.trim() || streaming} loading={streaming}>
+            Send
+          </Button>
+        </form>
+      </PanelBody>
+    </Panel>
+  );
+}
+
+function EmptyState({ onPick }: { onPick: (q: string) => void }) {
+  return (
+    <div className="h-full flex flex-col items-center justify-center text-center px-4">
+      <Eyebrow>Try one of these</Eyebrow>
+      <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-2xl">
+        {SUGGESTED.map((q) => (
+          <button
+            key={q}
+            onClick={() => onPick(q)}
+            className="text-left text-sm px-4 py-3 rounded-[6px] border border-line bg-canvas hover:bg-canvas-sunken hover:border-line-strong transition-colors duration-180"
+          >
+            {q}
+          </button>
+        ))}
+      </div>
+      <p className="mt-6 text-xs text-ink-tertiary max-w-md">
+        The chatbot answers from general knowledge only — no live prices,
+        no real-time rankings. For family-tree data and live prices, use
+        the rest of My Beginning.
+      </p>
+    </div>
+  );
+}
+
+function Bubble({
+  message,
+  isStreaming,
+}: {
+  message: ChatMessage;
+  isStreaming: boolean;
+}) {
+  if (message.role === "user") {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[80%] rounded-[8px] bg-accent text-ink-inverse px-4 py-2.5 text-sm leading-relaxed">
+          {message.content}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col items-start gap-1.5">
+      <div className="max-w-[85%] rounded-[8px] bg-canvas-sunken border border-line-subtle px-4 py-2.5 text-sm text-ink-primary leading-relaxed whitespace-pre-wrap">
+        {message.content}
+        {isStreaming && message.content === "" && (
+          <span className="inline-flex gap-1 text-ink-tertiary">
+            <Dot delay={0} />
+            <Dot delay={150} />
+            <Dot delay={300} />
+          </span>
+        )}
+        {isStreaming && message.content !== "" && (
+          <span className="inline-block w-1.5 h-3.5 bg-ink-primary ml-0.5 align-middle animate-pulse-soft" />
+        )}
+      </div>
+      {message.tools && message.tools.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 px-1">
+          {message.tools.map((t, i) => (
+            <span
+              key={i}
+              className="inline-flex items-center gap-1 text-2xs uppercase tracking-[0.08em] text-ink-tertiary font-mono"
+            >
+              <span className="h-1 w-1 rounded-full bg-accent" />
+              {t.tool}({Object.values(t.input).join(", ")})
+            </span>
+          ))}
+        </div>
       )}
     </div>
   );
 }
 
-function Cell({ label, children }: { label: string; children: React.ReactNode }) {
+function Dot({ delay }: { delay: number }) {
   return (
-    <div className="bg-canvas p-4">
-      <Eyebrow>{label}</Eyebrow>
-      <div className="text-sm mt-1.5">{children}</div>
-    </div>
+    <span
+      className="inline-block h-1.5 w-1.5 rounded-full bg-ink-tertiary animate-pulse-soft"
+      style={{ animationDelay: `${delay}ms` }}
+    />
   );
 }
 
-function ExplainPanel() {
-  const [base, setBase] = useState("SOL");
-  const [related, setRelated] = useState("ETH");
-  const [narrative, setNarrative] = useState<string | null>(null);
-  const [source, setSource] = useState<"deterministic" | "anthropic" | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [mode, setMode] = useState<"fast" | "refine">("fast");
-
-  async function generate() {
-    setLoading(true);
-    setError(null);
-    try {
-      // Pull lineage from the server via /api/ancestor.
-      const r = await fetch("/api/ancestor", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol: base, limit: 250 }),
-      });
-      const json = (await r.json()) as Record<string, unknown> & {
-        ancestors?: Array<{
-          symbol: string;
-          name: string;
-          relation: string;
-          confidence: number;
-          notes: string;
-          source: "curated" | "tavily";
-        }>;
-        error?: string;
-      };
-      if (!r.ok || !json.ancestors) {
-        setError(json.error ?? "Could not load ancestor calculation.");
-        return;
+function applyEvent(
+  event:
+    | { type: "text"; text: string }
+    | { type: "tool"; tool: string; input: Record<string, unknown> }
+    | { type: "meta"; model: string; provider: "anthropic" | "minimax" }
+    | { type: "error"; message: string },
+  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
+  setModel: (m: string) => void,
+  setProvider: (p: "anthropic" | "minimax") => void,
+  setError: (e: string) => void,
+) {
+  if (event.type === "text") {
+    setMessages((prev) => {
+      const next = [...prev];
+      const last = next[next.length - 1];
+      if (last && last.role === "assistant") {
+        next[next.length - 1] = { ...last, content: last.content + event.text };
       }
-      const match = json.ancestors.find(
-        (a) => a.symbol.toUpperCase() === related.toUpperCase(),
-      );
-      if (!match) {
-        setError(
-          `${related} is not in ${base}'s lineage. Try one of: ${json.ancestors
-            .map((a) => a.symbol)
-            .slice(0, 6)
-            .join(", ")}.`,
-        );
-        return;
+      return next;
+    });
+  } else if (event.type === "tool") {
+    setMessages((prev) => {
+      const next = [...prev];
+      const last = next[next.length - 1];
+      if (last && last.role === "assistant") {
+        const tools = [...(last.tools ?? []), { tool: event.tool, input: event.input }];
+        next[next.length - 1] = { ...last, tools };
       }
-      const explainRes = await fetch("/api/ai/explain", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          baseName: base,
-          node: match,
-          mode,
-        }),
-      });
-      const explainJson = (await explainRes.json()) as {
-        narrative?: string;
-        source?: "deterministic" | "anthropic";
-        error?: string;
-      };
-      if (!explainRes.ok) {
-        setError(explainJson.error ?? "Explanation failed.");
-        return;
-      }
-      setNarrative(explainJson.narrative ?? null);
-      setSource(explainJson.source ?? null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unexpected error.");
-    } finally {
-      setLoading(false);
-    }
+      return next;
+    });
+  } else if (event.type === "meta") {
+    setModel(event.model);
+    setProvider(event.provider);
+  } else if (event.type === "error") {
+    setError(event.message);
   }
+}
 
-  return (
-    <Panel>
-      <PanelHeader
-        eyebrow="Lineage explainer"
-        title="Turn a lineage edge into a sentence"
-        description="Uses the pre-calculated ancestor node from the lineage engine — never raw CMC data. Optional Anthropic refinement available when ANTHROPIC_API_KEY is configured."
-      />
-      <PanelBody>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div>
-            <Label>Base asset</Label>
-            <Input value={base} onChange={(e) => setBase(e.target.value.toUpperCase())} placeholder="e.g. SOL" />
-          </div>
-          <div>
-            <Label>Related asset</Label>
-            <Input value={related} onChange={(e) => setRelated(e.target.value.toUpperCase())} placeholder="e.g. AVAX" />
-          </div>
-          <div>
-            <Label>Mode</Label>
-            <div className="flex h-10 items-center rounded-[4px] border border-line-strong overflow-hidden">
-              {(["fast", "refine"] as const).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => setMode(m)}
-                  className={`flex-1 h-full text-sm transition-colors duration-180 ${mode === m ? "bg-ink-primary text-ink-inverse" : "bg-canvas text-ink-secondary hover:bg-canvas-sunken"}`}
-                >
-                  {m === "fast" ? "Deterministic" : "AI refine"}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-4 flex items-center justify-end">
-          <button
-            onClick={generate}
-            disabled={loading || !base || !related}
-            className="rounded-[4px] bg-ink-primary text-ink-inverse text-sm h-8 px-3 hover:bg-[#1c1c1c] disabled:opacity-50 transition-colors duration-180"
-          >
-            {loading ? "Generating…" : "Explain"}
-          </button>
-        </div>
-
-        {error && <p className="mt-3 text-sm text-signal-negative">{error}</p>}
-
-        {narrative && (
-          <div className="mt-5 rounded-[6px] border border-line bg-canvas-sunken/40 p-5">
-            <div className="flex items-center justify-between mb-3">
-              <Eyebrow>Explanation</Eyebrow>
-              <span className="text-2xs uppercase tracking-[0.12em] text-ink-tertiary">
-                {source === "anthropic" ? "AI refined" : "Deterministic"}
-              </span>
-            </div>
-            <p className="text-md text-ink-primary leading-relaxed">{narrative}</p>
-          </div>
-        )}
-      </PanelBody>
-    </Panel>
-  );
+async function safeJson(res: Response): Promise<{ error?: string }> {
+  try {
+    return (await res.json()) as { error?: string };
+  } catch {
+    return {};
+  }
 }

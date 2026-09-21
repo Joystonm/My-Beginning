@@ -1,4 +1,4 @@
--- Who Is My Ancestor — initial schema
+-- My Beginning — initial schema
 -- Apply via: supabase db push   OR   paste into the Supabase SQL editor.
 
 create extension if not exists "pgcrypto";

@@ -19,6 +19,7 @@ import {
   deleteLocalUniverse,
   listLocalUniverses,
   removeAssetFromLocalUniverse,
+  reorderAssetsInLocalUniverse,
   updateLocalUniverse,
   type LocalUniverse,
 } from "./local";
@@ -156,4 +157,45 @@ export async function renameUniverse(
     /* fall through */
   }
   return updateLocalUniverse(id, patch);
+}
+
+export async function setUniverseVisibility(
+  id: string,
+  isPublic: boolean,
+): Promise<Universe | null> {
+  try {
+    const { ok, body } = await jsonRequest<{
+      universe?: Universe;
+      error?: string;
+    }>(`/api/universes/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ isPublic }),
+    });
+    if (ok && body.universe) return body.universe;
+  } catch {
+    /* fall through */
+  }
+  return updateLocalUniverse(id, { isPublic });
+}
+
+export async function reorderAssets(
+  universeId: string,
+  orderedCmcIds: number[],
+): Promise<Universe | null> {
+  try {
+    const { ok, body } = await jsonRequest<{
+      universe?: Universe;
+      error?: string;
+    }>(
+      `/api/universes/${encodeURIComponent(universeId)}/reorder`,
+      {
+        method: "POST",
+        body: JSON.stringify({ order: orderedCmcIds }),
+      },
+    );
+    if (ok && body.universe) return body.universe;
+  } catch {
+    /* fall through */
+  }
+  return reorderAssetsInLocalUniverse(universeId, orderedCmcIds);
 }

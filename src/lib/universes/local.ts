@@ -13,6 +13,7 @@ export interface LocalUniverse {
   assets: LocalUniverseAsset[];
   createdAt: number;
   updatedAt: number;
+  isPublic?: boolean;
 }
 
 export interface LocalUniverseAsset {
@@ -68,7 +69,7 @@ export function createLocalUniverse(input: {
 
 export function updateLocalUniverse(
   id: string,
-  patch: Partial<Pick<LocalUniverse, "name" | "description" | "color">>,
+  patch: Partial<Pick<LocalUniverse, "name" | "description" | "color" | "isPublic">>,
 ): LocalUniverse | null {
   const all = readAll();
   const idx = all.findIndex((u) => u.id === id);
@@ -79,6 +80,40 @@ export function updateLocalUniverse(
     ...existing,
     ...patch,
     name: patch.name?.trim() || existing.name,
+    updatedAt: Date.now(),
+  };
+  all[idx] = next;
+  writeAll(all);
+  return next;
+}
+
+/**
+ * Reorder assets within a local universe. The array's order is the
+ * implicit position — no position field stored locally.
+ */
+export function reorderAssetsInLocalUniverse(
+  id: string,
+  orderedCmcIds: number[],
+): LocalUniverse | null {
+  const all = readAll();
+  const idx = all.findIndex((u) => u.id === id);
+  if (idx === -1) return null;
+  const existing = all[idx];
+  if (!existing) return null;
+  const byId = new Map(existing.assets.map((a) => [a.cmcId, a]));
+  const reordered: LocalUniverseAsset[] = [];
+  for (const cmcId of orderedCmcIds) {
+    const asset = byId.get(cmcId);
+    if (asset) {
+      reordered.push(asset);
+      byId.delete(cmcId);
+    }
+  }
+  // Any assets not present in the order list go to the end, preserving their relative order.
+  for (const remaining of byId.values()) reordered.push(remaining);
+  const next: LocalUniverse = {
+    ...existing,
+    assets: reordered,
     updatedAt: Date.now(),
   };
   all[idx] = next;

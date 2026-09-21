@@ -1,4 +1,4 @@
-# Project: Who Is My Ancestor
+# Project: My Beginning
 
 A lineage engine for the CoinMarketCap universe. Pick any cryptocurrency
 and discover the family tree it sits in — code forks, platform tokens,
@@ -110,7 +110,7 @@ most important page in the app.
 
 What the user sees (in order, top to bottom):
 
-1. **Hero**: "Who is my ancestor?" + a search box (`AssetSearch`).
+1. **Hero**: "What's my beginning?" + a search box (`AssetSearch`).
    Placeholder suggests "Try BTC, ETH, SOL, DOGE, USDT…"
 2. **Breadcrumb of drilled-down symbols** (if you've drilled into an
    ancestor's lineage).

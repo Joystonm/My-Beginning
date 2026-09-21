@@ -61,20 +61,70 @@ export interface AuthUser {
   displayName: string | null;
 }
 
+/**
+ * Supabase auth cookies are named `sb-<project-ref>-auth-token` (and
+ * sometimes a chunked `-0`, `-1` pair). If none of those are present,
+ * there is no session to validate — short-circuit before we ever hit
+ * `auth.getUser()`, which would otherwise fire a network request and,
+ * when Supabase is unreachable, spam `AuthRetryableFetchError` retries
+ * to the dev server console.
+ */
+function hasSupabaseAuthCookie(cookieStore: ReturnType<typeof cookies>): boolean {
+  const cookies = cookieStore.getAll();
+  for (const c of cookies) {
+    if (c.name.startsWith("sb-") && c.name.endsWith("-auth-token")) return true;
+  }
+  return false;
+}
+
+/**
+ * Tiny per-process cache so a single render pass (layout → header →
+ * nav) doesn't fire three identical `auth.getUser()` round trips.
+ * TTL is intentionally short — long enough to collapse duplicate
+ * lookups in one request, short enough that sign-out/in still feels
+ * instant to the next page load.
+ */
+const USER_CACHE_TTL_MS = 5_000;
+let cachedUser: { value: AuthUser | null; expiresAt: number } | null = null;
+
 export async function getCurrentUser(): Promise<AuthUser | null> {
+  if (cachedUser && cachedUser.expiresAt > Date.now()) {
+    return cachedUser.value;
+  }
+
   const client = getSupabaseServerClient();
   if (!client) return null;
+
+  // Anonymous visitor: no auth cookie, nothing to validate, no network call.
+  // This is the single most important line for keeping dev logs clean when
+  // Supabase is paused / slow / unreachable.
+  if (!hasSupabaseAuthCookie(cookies())) {
+    cachedUser = { value: null, expiresAt: Date.now() + USER_CACHE_TTL_MS };
+    return null;
+  }
+
   try {
     const { data, error } = await client.auth.getUser();
-    if (error || !data.user) return null;
-    return {
+    if (error || !data.user) {
+      cachedUser = { value: null, expiresAt: Date.now() + USER_CACHE_TTL_MS };
+      return null;
+    }
+    const user: AuthUser = {
       id: data.user.id,
       email: data.user.email ?? null,
       displayName:
         (data.user.user_metadata?.display_name as string | undefined) ??
         (data.user.email ? data.user.email.split("@")[0] ?? null : null),
     };
+    cachedUser = { value: user, expiresAt: Date.now() + USER_CACHE_TTL_MS };
+    return user;
   } catch {
+    cachedUser = { value: null, expiresAt: Date.now() + USER_CACHE_TTL_MS };
     return null;
   }
+}
+
+/** Clear the in-memory user cache (e.g. after sign-in / sign-out). */
+export function clearCurrentUserCache(): void {
+  cachedUser = null;
 }

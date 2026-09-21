@@ -20,6 +20,21 @@ function mapColor(value: unknown): Universe["color"] {
 }
 
 /**
+ * Build a URL-safe slug from a universe name. Appends a short random
+ * suffix to satisfy the `(owner_id, slug)` uniqueness constraint — two
+ * users can both have a universe called "AI" without colliding.
+ */
+function generateSlug(name: string): string {
+  const base = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  const suffix = Math.random().toString(36).slice(2, 8);
+  return base ? `${base}-${suffix}` : suffix;
+}
+
+/**
  * List all universes owned by the current user.
  *
  * We only return universes owned by the caller — RLS makes
@@ -32,12 +47,20 @@ export async function listUniversesForUser(userId: string): Promise<Universe[]> 
 
   const { data, error } = await client
     .from("universes")
-    .select("id, name, description, color, created_at, updated_at")
+    .select("id, name, description, color, is_public, created_at, updated_at")
     .eq("owner_id", userId)
     .order("updated_at", { ascending: false });
 
-  if (error || !data) return [];
-
+  if (error || !data) {
+    console.error("[universes] listUniversesForUser failed:", {
+      userId,
+      code: error?.code,
+      message: error?.message,
+      details: error?.details,
+      hint: error?.hint,
+    });
+    return [];
+  }
   const detailed: Universe[] = [];
   for (const row of data) {
     const { data: assets } = await client
@@ -50,6 +73,7 @@ export async function listUniversesForUser(userId: string): Promise<Universe[]> 
       name: row.name,
       description: row.description ?? undefined,
       color: mapColor(row.color),
+      isPublic: Boolean(row.is_public),
       createdAt: new Date(row.created_at).getTime(),
       updatedAt: new Date(row.updated_at).getTime(),
       assets: (assets ?? []).map((a) => ({
@@ -74,6 +98,7 @@ export async function createUniverseForUser(
     .from("universes")
     .insert({
       owner_id: userId,
+      slug: generateSlug(input.name),
       name: input.name.trim(),
       description: input.description?.trim() || null,
       color: input.color ?? "teal",
@@ -81,13 +106,23 @@ export async function createUniverseForUser(
     .select()
     .single();
 
-  if (error || !data) return null;
+  if (error || !data) {
+    console.error("[universes] createUniverseForUser failed:", {
+      userId,
+      code: error?.code,
+      message: error?.message,
+      details: error?.details,
+      hint: error?.hint,
+    });
+    return null;
+  }
 
   return {
     id: data.id,
     name: data.name,
     description: data.description ?? undefined,
     color: mapColor(data.color),
+    isPublic: Boolean(data.is_public),
     createdAt: new Date(data.created_at).getTime(),
     updatedAt: new Date(data.updated_at).getTime(),
     assets: [],
@@ -126,7 +161,45 @@ export async function renameUniverseForUser(
     .update(updates)
     .eq("id", id)
     .eq("owner_id", userId);
-  if (error) return null;
+  if (error) {
+    console.error("[universes] renameUniverseForUser failed:", {
+      userId,
+      id,
+      code: error.code,
+      message: error.message,
+    });
+    return null;
+  }
+
+  return refetchUniverseForUser(userId, id);
+}
+
+export async function setUniverseVisibilityForUser(
+  userId: string,
+  id: string,
+  isPublic: boolean,
+): Promise<Universe | null> {
+  const client = getSupabaseServerClient();
+  if (!client) return null;
+
+  const { error } = await client
+    .from("universes")
+    .update({
+      is_public: isPublic,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .eq("owner_id", userId);
+  if (error) {
+    console.error("[universes] setUniverseVisibilityForUser failed:", {
+      userId,
+      id,
+      isPublic,
+      code: error.code,
+      message: error.message,
+    });
+    return null;
+  }
 
   return refetchUniverseForUser(userId, id);
 }
@@ -147,7 +220,13 @@ export async function addAssetForUser(
     .eq("id", universeId)
     .eq("owner_id", userId)
     .maybeSingle();
-  if (!owned) return null;
+  if (!owned) {
+    console.error("[universes] addAssetForUser: universe not found or not owned", {
+      userId,
+      universeId,
+    });
+    return null;
+  }
 
   // Determine next position.
   const { data: existing } = await client
@@ -168,7 +247,16 @@ export async function addAssetForUser(
     },
     { onConflict: "universe_id,cmc_id" },
   );
-  if (error) return null;
+  if (error) {
+    console.error("[universes] addAssetForUser upsert failed:", {
+      userId,
+      universeId,
+      asset,
+      code: error.code,
+      message: error.message,
+    });
+    return null;
+  }
 
   // Touch updated_at on the universe.
   await client
@@ -192,7 +280,16 @@ export async function removeAssetForUser(
     .delete()
     .eq("universe_id", universeId)
     .eq("cmc_id", cmcId);
-  if (error) return null;
+  if (error) {
+    console.error("[universes] removeAssetForUser failed:", {
+      userId,
+      universeId,
+      cmcId,
+      code: error.code,
+      message: error.message,
+    });
+    return null;
+  }
 
   await client
     .from("universes")
@@ -208,6 +305,66 @@ async function refetchUniverseForUser(
 ): Promise<Universe | null> {
   const all = await listUniversesForUser(userId);
   return all.find((u) => u.id === id) ?? null;
+}
+
+/**
+ * Persist a new ordering for a universe's assets. Updates
+ * `universe_assets.position` in place — no need to delete and re-insert.
+ *
+ * Position values are assigned sequentially in the order received, so
+ * the caller just needs to send the cmc_ids in the desired order.
+ */
+export async function reorderAssetsForUser(
+  userId: string,
+  universeId: string,
+  orderedCmcIds: number[],
+): Promise<Universe | null> {
+  const client = getSupabaseServerClient();
+  if (!client) return null;
+
+  // Confirm ownership before mutating.
+  const { data: owned } = await client
+    .from("universes")
+    .select("id")
+    .eq("id", universeId)
+    .eq("owner_id", userId)
+    .maybeSingle();
+  if (!owned) {
+    console.error("[universes] reorderAssetsForUser: universe not found or not owned", {
+      userId,
+      universeId,
+    });
+    return null;
+  }
+
+  // Fire position updates in parallel — each is independent.
+  const updates = await Promise.all(
+    orderedCmcIds.map((cmcId, position) =>
+      client
+        .from("universe_assets")
+        .update({ position })
+        .eq("universe_id", universeId)
+        .eq("cmc_id", cmcId)
+        .then(({ error }) => ({ cmcId, error })),
+    ),
+  );
+  const failed = updates.filter((u) => u.error);
+  if (failed.length > 0) {
+    console.error("[universes] reorderAssetsForUser: some position updates failed:", {
+      userId,
+      universeId,
+      failures: failed.map((f) => ({ cmcId: f.cmcId, message: f.error?.message })),
+    });
+    return null;
+  }
+
+  // Touch updated_at on the universe so the card's relative timestamp refreshes.
+  await client
+    .from("universes")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("id", universeId);
+
+  return refetchUniverseForUser(userId, universeId);
 }
 
 export type { LocalUniverseAsset };

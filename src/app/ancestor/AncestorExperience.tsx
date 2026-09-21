@@ -546,7 +546,7 @@ function AncestorExperienceInner() {
         <Eyebrow>Ancestor engine · v2</Eyebrow>
         <div className="mt-2 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
           <h1 className="heading-display text-3xl sm:text-4xl text-ink-primary max-w-xl">
-            Who is my ancestor?
+            What's my beginning?
           </h1>
           <p className="text-sm text-ink-secondary max-w-md">
             Select an asset. Read its story. Discover where it sits in the

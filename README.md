@@ -1,4 +1,4 @@
-# Who Is My Ancestor
+# My Beginning
 
 A new way to explore relationships inside the cryptocurrency universe.
 
@@ -14,7 +14,7 @@ Track: **Data & Visualisation**.
 
 ## What is the product?
 
-Every asset has a market story. Who Is My Ancestor makes that story
+Every asset has a market story. My Beginning makes that story
 navigable.
 
 The flagship experience — the **Ancestor** page — lets a user pick any

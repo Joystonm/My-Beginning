@@ -12,6 +12,8 @@
     "test:hierarchy": "tsx scripts/test-hierarchy.ts",
     "test:stories": "tsx --import ./scripts/test-loader.ts scripts/test-story-orchestrator.ts",
     "test:auth": "tsx --import ./scripts/test-loader.ts scripts/test-auth-redirect.ts",
+    "story": "tsx --env-file=.env.local scripts/generate-story.ts",
+    "story:stream": "tsx --env-file=.env.local scripts/generate-story.ts --stream",
     "test": "npm run test:hierarchy && npm run test:stories && npm run test:auth"
   },
   "dependencies": {

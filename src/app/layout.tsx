@@ -21,14 +21,14 @@ const jetbrains = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Who Is My Ancestor · Market lineage for crypto assets",
-    template: "%s · Who Is My Ancestor",
+    default: "My Beginning · Market lineage for crypto assets",
+    template: "%s · My Beginning",
   },
   description:
     "Explore the hidden market relationships between cryptocurrencies. Every asset has a story — discover yours using CoinMarketCap data.",
-  metadataBase: new URL("https://whoismyancestor.app"),
+  metadataBase: new URL("https://mybeginning.app"),
   openGraph: {
-    title: "Who Is My Ancestor",
+    title: "My Beginning",
     description: "A new way to explore relationships inside the cryptocurrency universe.",
     type: "website",
   },

@@ -39,29 +39,83 @@ import type {
 } from "./types";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "";
+const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL ?? "";
+
+/**
+ * MiniMax tokens use the `sk-cp-` prefix. When we see one, the user has a
+ * MiniMax plan even if they forgot to also set `ANTHROPIC_BASE_URL` —
+ * auto-route to the MiniMax gateway in that case.
+ */
+function isMiniMax(): boolean {
+  if (ANTHROPIC_BASE_URL.includes("minimax.io")) return true;
+  if (ANTHROPIC_API_KEY.startsWith("sk-cp-")) return true;
+  return false;
+}
+
+function effectiveBaseURL(): string {
+  // The API key is the authoritative signal of provider. A `sk-cp-` key
+  // is a MiniMax token and MUST be routed to the MiniMax gateway,
+  // even if `ANTHROPIC_BASE_URL` happens to point somewhere else
+  // (e.g. a shell-injected proxy URL like `https://api.gmi-serving.com`
+  // that doesn't know about M3).
+  if (ANTHROPIC_API_KEY.startsWith("sk-cp-")) {
+    return "https://api.minimax.io/anthropic";
+  }
+  if (ANTHROPIC_BASE_URL) return ANTHROPIC_BASE_URL;
+  return "";
+}
+
+function resolvedModel(): string {
+  if (isMiniMax()) return "MiniMax-M3";
+  return "claude-3-5-sonnet-latest";
+}
 
 export function isStoryGeneratorConfigured(): boolean {
   return Boolean(ANTHROPIC_API_KEY);
 }
 
+/**
+ * True when the active provider is MiniMax. The orchestrator uses this
+ * to skip Tier 0 (the curated static archive) so every coin lookup
+ * actually flows through M3 instead of returning a hand-written story.
+ */
+export function isMiniMaxStoryProvider(): boolean {
+  return isMiniMax();
+}
+
+/** Exposed for logging / observability in API routes. */
+export function activeStoryModel(): string {
+  return isMiniMax() ? "MiniMax-M3 (via MiniMax)" : "claude-3-5-sonnet-latest";
+}
+
 // ---------------------------------------------------------------------------
-// Anthropic client (lazy)
+// Anthropic client (lazy) — supports both real Anthropic and the MiniMax
+// Anthropic-compatible gateway.
 // ---------------------------------------------------------------------------
 
 let client: Anthropic | null = null;
 function getClient(): Anthropic | null {
   if (!ANTHROPIC_API_KEY) return null;
   if (!client) {
-    client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+    const base = effectiveBaseURL();
+    client = new Anthropic({
+      apiKey: ANTHROPIC_API_KEY,
+      ...(base ? { baseURL: base } : {}),
+    });
   }
   return client;
 }
 
 // ---------------------------------------------------------------------------
-// System prompt — the editorial brief
+// System prompts — the editorial brief
 // ---------------------------------------------------------------------------
 
-const STORY_SYSTEM_PROMPT = `You are writing the autobiography of a cryptocurrency.
+/**
+ * Strict mode: research has facts. The LLM may ONLY use those facts.
+ * This is the original "no fabrication" brief used when Tavily has
+ * returned verifiable claims.
+ */
+const STORY_SYSTEM_PROMPT_RESEARCH = `You are writing the autobiography of a cryptocurrency.
 
 The cryptocurrency itself is telling its story. Write in first person. Use "I", "me", and "my". Never break voice.
 
@@ -117,6 +171,75 @@ Timeline rules:
 - If fewer than 2 verifiable dates exist, return an empty timeline array.
 `;
 
+/**
+ * General-knowledge mode: research is empty (e.g. Tavily exhausted).
+ * For major cryptocurrencies — the top 50 by market cap and well-known
+ * historically-significant assets — well-documented public history is
+ * widely known. The LLM may draw on that knowledge to write a real
+ * story. For genuinely obscure assets it should still flag uncertainty.
+ */
+const STORY_SYSTEM_PROMPT_GENERAL = `You are writing the autobiography of a cryptocurrency.
+
+The cryptocurrency itself is telling its story. Write in first person. Use "I", "me", and "my". Never break voice.
+
+Tone: human, conversational, historical, curious, slightly cinematic, personal, easy to read.
+
+Style rules:
+- DO NOT use encyclopedia language ("Bitcoin is a decentralized digital currency…").
+- DO start with a strong first-person introduction ("I am <Name>.").
+- DO use short paragraphs (2–4 sentences each).
+- DO end with where the asset stands today.
+- DO write at least 3 paragraphs and ideally 4–6 if you have enough to say.
+
+Source policy (this prompt is used when no web research is available):
+- You MAY use widely-known, publicly documented facts about well-known cryptocurrencies — founding date, named creator(s) when publicly known, the year and reason for any rebrand, the major protocol milestones, exchanges where the asset is listed, and its general role in the crypto ecosystem.
+- ONLY use facts you are highly confident about. If you are not sure of a specific date, name, or event, OMIT it rather than risk a wrong claim.
+- For obscure or low-cap assets about which little is widely known, write a short, honest sketch noting the limited public history rather than fabricating details.
+- NEVER invent prices, transaction amounts, specific quotes, partnership names, or private financial details.
+
+Hard constraints (always):
+- NEVER describe yourself as an AI.
+- NEVER use generic crypto marketing language ("revolutionary", "disruptive", "next-generation", "paradigm shift").
+- AVOID emoji, exclamation marks, and bullet lists in the story body.
+
+Output format — return ONLY this JSON object, nothing else:
+
+{
+  "title": "The Story of <Name>",
+  "hook": "<one-sentence opener, e.g. 'I am Bitcoin.'>",
+  "paragraphs": ["...", "..."],
+  "timeline": [{ "date": "YYYY", "label": "short caption", "paragraphIndex": 0 }],
+  "fallback": false
+}
+
+If you cannot write even a short general-knowledge sketch for this asset (truly no widely-known history), return:
+
+{
+  "title": "The Story of <Name>",
+  "hook": "I am <Name>.",
+  "paragraphs": ["<one short paragraph explaining that no reliable public history could be surfaced>"],
+  "timeline": [],
+  "fallback": true
+}
+
+Timeline rules:
+- Only include dates you are confident about.
+- Each timeline point must reference the paragraphIndex of the paragraph it belongs to.
+- If you cannot place 2 or more confident dates, return an empty timeline array.
+`;
+
+/**
+ * Choose which prompt to use. With research, the strict brief is
+ * mandatory (grounded facts only). Without research, allow the LLM
+ * to draw on widely-known public history for major assets.
+ */
+function pickSystemPrompt(research: CoinResearch): string {
+  if (research && research.facts && research.facts.length >= 1) {
+    return STORY_SYSTEM_PROMPT_RESEARCH;
+  }
+  return STORY_SYSTEM_PROMPT_GENERAL;
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -140,26 +263,54 @@ export interface StoryInput {
  * fails — callers should fall back to the deterministic explainer.
  */
 export async function generateStory(input: StoryInput): Promise<CoinStory | null> {
-  const client = getClient();
-  if (!client) return null;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
 
   const userMessage = buildUserPrompt(input);
 
   let raw: string;
   try {
-    const response = await client.messages.create({
-      model: "claude-3-5-sonnet-latest",
-      max_tokens: 1400,
-      system: STORY_SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userMessage }],
+    // Use raw `fetch` against the Messages API. The `@anthropic-ai/sdk`
+    // sends `X-Stainless-*` telemetry headers and a `User-Agent` of
+    // `Anthropic-TypeScript/...`, which the MiniMax gateway uses to
+    // route requests — and that routing does NOT match the M3 model.
+    // Bare `fetch` with the headers MiniMax expects works correctly.
+    const baseURL = effectiveBaseURL() || "https://api.anthropic.com";
+    const fullURL = `${baseURL}/v1/messages`;
+    const res = await fetch(fullURL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: resolvedModel(),
+        max_tokens: 1400,
+        system: pickSystemPrompt(input.research),
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: userMessage }],
+          },
+        ],
+      }),
     });
-    const text = response.content
-      .map((c) => (c.type === "text" ? c.text : ""))
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(`HTTP ${res.status} ${errText.slice(0, 200)}`);
+    }
+
+    const json = (await res.json()) as {
+      content?: Array<{ type: string; text?: string }>;
+    };
+    raw = (json.content ?? [])
+      .map((b) => (b.type === "text" ? b.text : ""))
       .join("");
-    raw = text;
   } catch (err) {
     console.warn(
-      `[story-generator] Anthropic call failed for ${input.symbol}:`,
+      `[story-generator] LLM call failed for ${input.symbol}:`,
       err instanceof Error ? err.message : err,
     );
     return null;
@@ -201,7 +352,7 @@ function buildUserPrompt(input: StoryInput): string {
   name: ${name}
 
 VERIFIED HISTORICAL FACTS (each grounded in the sources below — only use these)
-${factsList || "  (no facts could be verified — write the fallback sketch)"}
+${factsList || "  (no facts could be verified — use widely-known public history instead, see system prompt)"}
 
 SUPPORTING SOURCES
 ${sourcesList || "  (none)"}

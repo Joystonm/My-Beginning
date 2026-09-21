@@ -51,7 +51,7 @@ export function SiteHeader() {
         <Link
           href="/"
           className="group flex items-center gap-2.5"
-          aria-label="Who Is My Ancestor — home"
+          aria-label="My Beginning — home"
         >
           <span
             aria-hidden
@@ -72,7 +72,7 @@ export function SiteHeader() {
           </span>
           <div className="flex items-baseline gap-1.5">
             <span className="text-md font-medium tracking-tight text-ink-primary">
-              Who Is My Ancestor
+              My Beginning
             </span>
             <span className="hidden text-2xs uppercase tracking-[0.16em] text-ink-tertiary sm:inline">
               Beta

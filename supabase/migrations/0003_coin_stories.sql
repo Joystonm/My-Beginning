@@ -1,4 +1,4 @@
--- Who Is My Ancestor — coin story persistence
+-- My Beginning — coin story persistence
 -- Apply via: supabase db push   OR   paste into the Supabase SQL editor.
 --
 -- Stores the cached Coin Story and the underlying Tavily research so the

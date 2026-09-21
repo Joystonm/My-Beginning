@@ -229,7 +229,7 @@ Required fields and what to paste:
 
 | Field | What to write |
 |---|---|
-| Project name | `Who Is My Ancestor` |
+| Project name | `My Beginning` |
 | One-line tagline | `A lineage engine for the CoinMarketCap universe. Every asset has a story — and an ancestry.` |
 | Description | (see below) |
 | Demo URL | Your Vercel URL |
@@ -240,7 +240,7 @@ Required fields and what to paste:
 
 ### 6.3. Description (~200 words)
 
-> Every cryptocurrency has a story. Who Is My Ancestor makes that
+> Every cryptocurrency has a story. My Beginning makes that
 > story navigable.
 >
 > Pick any asset and instantly see its closest market relatives — by

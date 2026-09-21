@@ -5,7 +5,6 @@ import { Tabs } from "@/components/design-system";
 import { OverviewTab } from "./OverviewTab";
 import { CompareTab } from "./CompareTab";
 import { ExplorerTab } from "./ExplorerTab";
-import { EvidenceTab } from "./EvidenceTab";
 import { AiTab } from "./AiTab";
 import type { CmcCryptocurrency, CmcGlobalMetrics } from "@/lib/cmc/types";
 
@@ -42,11 +41,6 @@ export function MarketLab({
         id: "explorer",
         label: "Data explorer",
         content: <ExplorerTab universe={universe} />,
-      },
-      {
-        id: "evidence",
-        label: "API evidence",
-        content: <EvidenceTab />,
       },
       {
         id: "ai",

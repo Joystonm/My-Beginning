@@ -1,7 +1,7 @@
 /**
  * Lineage drift detector.
  *
- * The headline insight of "Who Is My Ancestor": not just *who* is in the
+ * The headline insight of "My Beginning": not just *who* is in the
  * family tree, but *which* members of the family are moving.
  *
  * For a base asset, we walk its descendants in the curated ancestor

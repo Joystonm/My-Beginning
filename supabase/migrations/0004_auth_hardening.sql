@@ -1,4 +1,4 @@
--- Who Is My Ancestor — auth hardening
+-- My Beginning — auth hardening
 -- Apply via: supabase db push   OR   paste into the Supabase SQL editor.
 --
 -- This migration consolidates RLS policies across user-scoped tables

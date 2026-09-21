@@ -37,7 +37,12 @@ import "server-only";
 import type { CmcCryptocurrency } from "@/lib/cmc/types";
 import type { CoinStory, CoinResearch, ResearchSource } from "./types";
 import { researchCoinHistory, clearStoryResearchCache } from "./research";
-import { fallbackStory, generateStory, isStoryGeneratorConfigured } from "./generator";
+import {
+  fallbackStory,
+  generateStory,
+  isMiniMaxStoryProvider,
+  isStoryGeneratorConfigured,
+} from "./generator";
 import {
   getCachedStory,
   getCachedResearch,
@@ -101,7 +106,14 @@ export async function getCoinStory(input: GetStoryInput): Promise<StoryResult> {
   //    zero DB / Tavily / LLM work. We still apply a tiny artificial
   //    delay so the UI feels like it's making a network call, and we
   //    persist the result so the next visitor hits step 1.
-  if (!input.forceRefresh) {
+  //
+  //    Exception: when the MiniMax provider is active we always run
+  //    the LLM. The static archive is a cost-saving shortcut for
+  //    users without an LLM; if MiniMax is configured, every coin
+  //    should exercise the M3 path so the story reflects whatever
+  //    the user just asked for, not a hand-written archive entry.
+  const skipStatic = isMiniMaxStoryProvider();
+  if (!input.forceRefresh && !skipStatic) {
     const staticStory = getStaticStory(symbol);
     if (staticStory) {
       await sleep(STATIC_FETCH_FEEL_MS);
@@ -167,12 +179,19 @@ export async function getCoinStory(input: GetStoryInput): Promise<StoryResult> {
   };
 
   let story: CoinStory | null = null;
-  // Only run the LLM when we have at least one verifiable fact. If
-  // Tavily returned nothing (or the cached research is empty), skip
-  // the LLM entirely and write a deterministic fallback — this saves
-  // Anthropic credits for long-tail coins on every subsequent visit.
+  // LLM gating:
+  //   - Default: only call the LLM when we have at least one verifiable
+  //     fact from research. Empty research → deterministic fallback, to
+  //     save LLM credits for long-tail coins.
+  //   - When MiniMax is the active provider, ALWAYS run the LLM if it's
+  //     configured — even if Tavily returned nothing or is unavailable.
+  //     The user has paid for the model and wants to see its output on
+  //     every coin. M3 will fall back to widely-known public facts for
+  //     top coins when research is empty; for unknown coins it will
+  //     still produce a short, honest "limited history" story.
   const hasFacts = Boolean(research && research.facts.length >= 1);
-  if (hasFacts && isStoryGeneratorConfigured() && research) {
+  const llmRequired = hasFacts || isMiniMaxStoryProvider();
+  if (llmRequired && isStoryGeneratorConfigured() && research) {
     try {
       story = await generateStory({
         symbol,

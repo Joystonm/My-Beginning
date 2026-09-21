@@ -14,11 +14,16 @@ export function formatUsd(value: number | null | undefined, opts?: {
   if (value == null || !Number.isFinite(value)) return "—";
   const { compact = false, precise = false } = opts ?? {};
   if (compact) {
+    // `minimumFractionDigits: 0` keeps server (Node ICU) and client (V8 ICU)
+    // in sync — without it, a value like 84_000_000_000 renders as "$84.0B"
+    // on the server but "$84B" in some browsers, which trips a hydration
+    // mismatch on the Overview stats grid.
     return new Intl.NumberFormat("en-US", {
       style: "currency",
       currency: "USD",
       notation: "compact",
       maximumFractionDigits: precise ? 2 : 1,
+      minimumFractionDigits: 0,
     }).format(value);
   }
   return new Intl.NumberFormat("en-US", {
