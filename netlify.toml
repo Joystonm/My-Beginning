@@ -1,0 +1,11 @@
+[build.environment]
+  # These four are flagged by the secrets scanner but are not secrets:
+  #   - LLM_PROVIDER / ANTHROPIC_BASE_URL are routing hints (the literal
+  #     "minimax" and gateway URL appear in source code as comparison
+  #     strings against process.env.*)
+  #   - NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY are
+  #     public-by-design — the NEXT_PUBLIC_ prefix means they MUST be
+  #     inlined into the client bundle.
+  # The real secrets (CMC_API_KEY, ANTHROPIC_API_KEY, TAVILY_API_KEY)
+  # remain scanned and are not listed here.
+  SECRETS_SCAN_OMIT_KEYS = "LLM_PROVIDER,ANTHROPIC_BASE_URL,NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY"
